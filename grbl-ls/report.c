@@ -212,6 +212,7 @@ void report_grbl_settings() {
     report_util_uint8_setting(32,0);
   #endif
   report_util_uint8_setting(40,bit_istrue(settings.extended_flags,EXT_BITFLAG_DRY_RUN));
+  report_util_float_setting(70,settings.probe_debounce,3);
   // Print axis settings
   uint8_t idx, set_idx;
   uint8_t val = AXIS_SETTINGS_START_VAL;

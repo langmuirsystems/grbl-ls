@@ -63,6 +63,7 @@
   #define DEFAULT_HOMING_SEEK_RATE 500.0 // mm/min
   #define DEFAULT_HOMING_DEBOUNCE_DELAY 250 // msec (0-65k)
   #define DEFAULT_HOMING_PULLOFF 1.0 // mm
+  #define DEFAULT_PROBE_DEBOUNCE 50.0 // ms
   #define DEFAULT_DRY_RUN 0 // false
 #endif
 
@@ -102,6 +103,7 @@
   #define DEFAULT_HOMING_SEEK_RATE 500.0 // mm/min
   #define DEFAULT_HOMING_DEBOUNCE_DELAY 250 // msec (0-65k)
   #define DEFAULT_HOMING_PULLOFF 1.0 // mm
+  #define DEFAULT_PROBE_DEBOUNCE 50.0 // ms
   #define DEFAULT_DRY_RUN 0 // false
 
 #endif
@@ -147,6 +149,7 @@
   #define DEFAULT_HOMING_SEEK_RATE 635.0 // mm/min
   #define DEFAULT_HOMING_DEBOUNCE_DELAY 250 // msec (0-65k)
   #define DEFAULT_HOMING_PULLOFF 1.0 // mm
+  #define DEFAULT_PROBE_DEBOUNCE 10.0 // ms
   #define DEFAULT_DRY_RUN 0 // false
 #endif
 
@@ -186,6 +189,7 @@
   #define DEFAULT_HOMING_SEEK_RATE 300.0 // mm/min
   #define DEFAULT_HOMING_DEBOUNCE_DELAY 250 // msec (0-65k)
   #define DEFAULT_HOMING_PULLOFF 3.0 // mm
+  #define DEFAULT_PROBE_DEBOUNCE 10.0 // ms
   #define DEFAULT_DRY_RUN 0 // false
 #endif
 
@@ -232,6 +236,7 @@
   #define DEFAULT_HOMING_SEEK_RATE 250.0 // mm/min
   #define DEFAULT_HOMING_DEBOUNCE_DELAY 250 // msec (0-65k)
   #define DEFAULT_HOMING_PULLOFF 1.0 // mm
+  #define DEFAULT_PROBE_DEBOUNCE 10.0 // ms
   #define DEFAULT_DRY_RUN 0 // false
 #endif
 
@@ -278,6 +283,7 @@
   #define DEFAULT_HOMING_SEEK_RATE 250.0 // mm/min
   #define DEFAULT_HOMING_DEBOUNCE_DELAY 250 // msec (0-65k)
   #define DEFAULT_HOMING_PULLOFF 1.0 // mm
+  #define DEFAULT_PROBE_DEBOUNCE 10.0 // ms
   #define DEFAULT_DRY_RUN 0 // false
 #endif
 
@@ -323,6 +329,7 @@
   #define DEFAULT_HOMING_SEEK_RATE 1000.0 // mm/min
   #define DEFAULT_HOMING_DEBOUNCE_DELAY 25 // msec (0-65k)
   #define DEFAULT_HOMING_PULLOFF 5.0 // mm
+  #define DEFAULT_PROBE_DEBOUNCE 10.0 // ms
   #define DEFAULT_DRY_RUN 0 // false
 #endif
 
@@ -369,6 +376,7 @@
   #define DEFAULT_HOMING_SEEK_RATE 750.0 // mm/min
   #define DEFAULT_HOMING_DEBOUNCE_DELAY 250 // msec (0-65k)
   #define DEFAULT_HOMING_PULLOFF 1.0 // mm
+  #define DEFAULT_PROBE_DEBOUNCE 10.0 // ms
   #define DEFAULT_DRY_RUN 0 // false
 #endif
 
@@ -415,6 +423,7 @@
   #define DEFAULT_HOMING_SEEK_RATE 750.0 // mm/min
   #define DEFAULT_HOMING_DEBOUNCE_DELAY 250 // msec (0-65k)
   #define DEFAULT_HOMING_PULLOFF 1.0 // mm
+  #define DEFAULT_PROBE_DEBOUNCE 10.0 // ms
   #define DEFAULT_DRY_RUN 0 // false
 #endif
 
@@ -459,6 +468,7 @@
   #define DEFAULT_HOMING_SEEK_RATE 250.0 // mm/min
   #define DEFAULT_HOMING_DEBOUNCE_DELAY 250 // msec (0-65k)
   #define DEFAULT_HOMING_PULLOFF 1.0 // mm
+  #define DEFAULT_PROBE_DEBOUNCE 10.0 // ms
   #define DEFAULT_DRY_RUN 0 // false
 #endif
 
@@ -499,6 +509,7 @@
   #define DEFAULT_HOMING_SEEK_RATE 500.0 // mm/min
   #define DEFAULT_HOMING_DEBOUNCE_DELAY 250 // msec (0-65k)
   #define DEFAULT_HOMING_PULLOFF 1.0 // mm
+  #define DEFAULT_PROBE_DEBOUNCE 10.0 // ms
   #define DEFAULT_DRY_RUN 0 // false
 #endif
 
@@ -539,6 +550,7 @@
   #define DEFAULT_HOMING_SEEK_RATE 500.0 // mm/min
   #define DEFAULT_HOMING_DEBOUNCE_DELAY 250 // msec (0-65k)
   #define DEFAULT_HOMING_PULLOFF 1.0 // mm
+  #define DEFAULT_PROBE_DEBOUNCE 10.0 // ms
   #define DEFAULT_DRY_RUN 0 // false
 #endif
 

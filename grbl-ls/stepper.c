@@ -129,6 +129,9 @@ static uint8_t dir_port_invert_mask;
 // Used to avoid ISR nesting of the "Stepper Driver Interrupt". Should never occur though.
 static volatile uint8_t busy;
 
+// CPU cycle counter divided by 64, used to keep track of real-world time
+uint16_t cycle_counter_div64;
+
 // Pointers for the step segment being prepped from the planner buffer. Accessed only by the
 // main program. Pointers may be planning segments or planner blocks ahead of what being executed.
 static plan_block_t *pl_block;     // Pointer to the planner block being prepped
@@ -328,6 +331,19 @@ ISR(TIMER1_COMPA_vect)
   busy = true;
   sei(); // Re-enable interrupts to allow Stepper Port Reset Interrupt to fire on-time.
          // NOTE: The remaining code in this ISR will finish before returning to main program.
+  
+  // Update cycle_counter_div64 based on Timer1 compare value
+  uint8_t prescaler = TCCR1B & ((1<<CS12) | (1<<CS11) | (1<<CS10));
+  if (prescaler == (1<<CS10)) {
+    // no prescaler
+    cycle_counter_div64 += OCR1A / 64;
+  } else if (prescaler == (1<<CS11)) {
+    // prescaler: 8
+    cycle_counter_div64 += OCR1A / 8;
+  } else {
+    // prescaler: 64
+    cycle_counter_div64 += OCR1A;
+  }
 
   // If there is no step segment, attempt to pop one from the stepper buffer
   if (st.exec_segment == NULL) {
@@ -381,7 +397,7 @@ ISR(TIMER1_COMPA_vect)
 
 
   // Check probing state.
-  if (sys_probe_state == PROBE_ACTIVE) { probe_state_monitor(); }
+  if (sys_probe_state == PROBE_ACTIVE) { probe_state_monitor(cycle_counter_div64); }
 
   // Reset step out bits.
   st.step_outbits = 0;

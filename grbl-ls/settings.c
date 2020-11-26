@@ -38,6 +38,7 @@ const __flash settings_t defaults = {\
     .homing_seek_rate = DEFAULT_HOMING_SEEK_RATE,
     .homing_debounce_delay = DEFAULT_HOMING_DEBOUNCE_DELAY,
     .homing_pulloff = DEFAULT_HOMING_PULLOFF,
+    .probe_debounce = DEFAULT_PROBE_DEBOUNCE,
     .flags = (DEFAULT_REPORT_INCHES << BIT_REPORT_INCHES) | \
              (DEFAULT_LASER_MODE << BIT_LASER_MODE) | \
              (DEFAULT_INVERT_ST_ENABLE << BIT_INVERT_ST_ENABLE) | \
@@ -303,6 +304,7 @@ uint8_t settings_store_global_setting(uint8_t parameter, float value) {
           settings.extended_flags &= ~EXT_BITFLAG_DRY_RUN;
         }
         break;
+      case 70: settings.probe_debounce = value; probe_set_debounce(value); break;
       default:
         return(STATUS_INVALID_STATEMENT);
     }

@@ -33,11 +33,21 @@ void probe_init();
 // and the probing cycle modes for toward-workpiece/away-from-workpiece.
 void probe_configure_invert_mask(uint8_t is_probe_away);
 
+// Use this to configure how the probe responds to being triggered
+// If ignore is true, the probe will immediately stop when triggered
+void probe_configure_ignore_debounce(bool ignore);
+
 // Returns probe pin state. Triggered = true. Called by gcode parser and probe state monitor.
 uint8_t probe_get_state();
 
 // Monitors probe pin state and records the system position when detected. Called by the
 // stepper ISR per ISR tick.
-void probe_state_monitor();
+void probe_state_monitor(uint16_t cycle_counter_div64);
+
+// Reset probe debounce counter
+void probe_reset_debounce();
+
+// Set probe debounce time (seconds)
+void probe_set_debounce(float value);
 
 #endif
