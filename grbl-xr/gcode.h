@@ -29,7 +29,7 @@
 // a unique motion. These are defined in the NIST RS274-NGC v3 g-code standard, available online,
 // and are similar/identical to other g-code interpreters by manufacturers (Haas,Fanuc,Mazak,etc).
 // NOTE: Modal group define values must be sequential and starting from zero.
-#define MODAL_GROUP_G0 0 // [G4,G10,G28,G28.1,G30,G30.1,G53,G92,G92.1] Non-modal
+#define MODAL_GROUP_G0 0 // [G4,G10,G28,G28.1,G30,G30.1,G53,G92,G92.1,M70] Non-modal
 #define MODAL_GROUP_G1 1 // [G0,G1,G2,G3,G38.2,G38.3,G38.4,G38.5,G80] Motion
 #define MODAL_GROUP_G2 2 // [G17,G18,G19] Plane selection
 #define MODAL_GROUP_G3 3 // [G90,G91] Distance mode
@@ -64,6 +64,7 @@
 #define NON_MODAL_ABSOLUTE_OVERRIDE 53 // G53 (Do not alter value)
 #define NON_MODAL_SET_COORDINATE_OFFSET 92 // G92 (Do not alter value)
 #define NON_MODAL_RESET_COORDINATE_OFFSET 102 //G92.1 (Do not alter value)
+#define NON_MODAL_SET_MACHINE_POS 192 // M70
 
 // Modal Group G1: Motion modes
 #define MOTION_MODE_SEEK 0 // G0 (Default: Must be zero)

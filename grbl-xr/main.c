@@ -120,8 +120,8 @@ int main(void)
     // setup THC
     sys_rt_exec_thc = 0;
     system_thc_enable(false);
-    pinMode(THC_ENABLE_BIT, 0x1);
-    digitalWrite(THC_ENABLE_BIT, 0);
+    THC_ENABLE_DDR |= THC_ENABLE_MASK;
+    THC_ENABLE_PORT &= ~(THC_ENABLE_MASK);
 
     // Start Grbl main loop. Processes program inputs and executes them.
     protocol_main_loop();

@@ -53,15 +53,17 @@ void protocol_main_loop()
     report_feedback_message(MESSAGE_ALARM_LOCK);
     sys.state = STATE_ALARM; // Ensure alarm state is set.
   } else {
-    // Check if the safety door is open.
     sys.state = STATE_IDLE;
-    if (system_check_safety_door_ajar()) {
-      bit_true(sys_rt_exec_state, EXEC_SAFETY_DOOR);
-      protocol_execute_realtime(); // Enter safety door mode. Should return as IDLE state.
-    }
     // All systems go!
     system_execute_startup(line); // Execute startup script.
   }
+  // Initialize status LEDs
+  STATUS_LED1_DDR |= STATUS_LED1_MASK;
+  STATUS_LED1_PORT &= ~(STATUS_LED1_MASK); // Start with LED off
+  STATUS_LED2_DDR |= STATUS_LED2_MASK;
+  STATUS_LED2_PORT &= ~(STATUS_LED2_MASK); // Start with LED off
+  STATUS_LED3_DDR |= STATUS_LED3_MASK;
+  STATUS_LED3_PORT &= ~(STATUS_LED3_MASK); // Start with LED off
 
   // ---------------------------------------------------------------------------------
   // Primary loop! Upon a system abort, this exits back to main() to reset the system.
@@ -191,6 +193,50 @@ void protocol_auto_cycle_start()
 }
 
 
+// Updates status LEDs based on system state
+void protocol_update_status_leds()
+{
+  if (sys.state == STATE_IDLE) { // 0
+    STATUS_LED1_PORT &= ~(STATUS_LED1_MASK);
+    STATUS_LED2_PORT &= ~(STATUS_LED2_MASK);
+    STATUS_LED3_PORT &= ~(STATUS_LED3_MASK);
+  } else if (sys.state & STATE_WAIT_THC){ //0
+    STATUS_LED1_PORT &= ~(STATUS_LED1_MASK);
+    STATUS_LED2_PORT &= ~(STATUS_LED2_MASK);
+    STATUS_LED3_PORT &= ~(STATUS_LED3_MASK);
+  } else if (sys.state & STATE_ALARM) { // 7
+    STATUS_LED1_PORT |= STATUS_LED1_MASK;
+    STATUS_LED2_PORT |= STATUS_LED2_MASK;
+    STATUS_LED3_PORT |= STATUS_LED3_MASK;
+  } else if (sys.state & (STATE_HOLD)) { // 6
+    STATUS_LED1_PORT |= STATUS_LED1_MASK;
+    STATUS_LED2_PORT |= STATUS_LED2_MASK;
+    STATUS_LED3_PORT &= ~(STATUS_LED3_MASK);
+  } else if (sys.state & STATE_CYCLE) { // 1
+    STATUS_LED1_PORT &= ~(STATUS_LED1_MASK);
+    STATUS_LED2_PORT &= ~(STATUS_LED2_MASK);
+    STATUS_LED3_PORT |= STATUS_LED3_MASK;
+  } else if (sys.state & STATE_JOG) { // 2
+    STATUS_LED1_PORT &= ~(STATUS_LED1_MASK);
+    STATUS_LED2_PORT |= STATUS_LED2_MASK;
+    STATUS_LED3_PORT &= ~(STATUS_LED3_MASK);
+  } else if (sys.state & STATE_HOMING) { // 4
+    STATUS_LED1_PORT |= STATUS_LED1_MASK;
+    STATUS_LED2_PORT &= ~(STATUS_LED2_MASK);
+    STATUS_LED3_PORT &= ~(STATUS_LED3_MASK);
+  } else if (sys.state & STATE_CHECK_MODE) { // 5
+    STATUS_LED1_PORT |= STATUS_LED1_MASK;
+    STATUS_LED2_PORT &= ~(STATUS_LED2_MASK);
+    STATUS_LED3_PORT |= STATUS_LED3_MASK;
+  } else {
+    // Unknown, this should never happen, mimic alarm state.
+    STATUS_LED1_PORT |= STATUS_LED1_MASK;
+    STATUS_LED2_PORT |= STATUS_LED2_MASK;
+    STATUS_LED3_PORT |= STATUS_LED3_MASK;
+  }
+}
+
+
 // This function is the general interface to Grbl's real-time command execution system. It is called
 // from various check points in the main program, primarily where there may be a while loop waiting
 // for a buffer to clear space or any point where the execution time from the last check point may
@@ -220,23 +266,38 @@ void protocol_exec_rt_system()
     // System alarm. Everything has shutdown by something that has gone severely wrong. Report
     // the source of the error to the user. If critical, Grbl disables by entering an infinite
     // loop until system reset/abort.
-
-    if(rt_exec == EXEC_ALARM_SOFT_LIMIT){
-      report_feedback_message(MESSAGE_CRITICAL_EVENT);
-      system_clear_exec_state_flag(EXEC_RESET); // Disable any existing reset
-      do {
-        // Block everything, except reset and status reports, until user issues reset or power
-        // cycles. Hard limits typically occur while unattended or not paying attention. Gives
-        // the user and a GUI time to do what is needed before resetting, like killing the
-        // incoming stream. The same could be said about soft limits. While the position is not
-        // lost, continued streaming could cause a serious crash if by chance it gets executed.
-      } while (bit_isfalse(sys_rt_exec_state,EXEC_RESET));
-    }
-
     sys.state = STATE_ALARM; // Set system alarm state
     report_alarm_message(rt_exec);
 
+//    if(rt_exec == EXEC_ALARM_SOFT_LIMIT){
+//      report_feedback_message(MESSAGE_CRITICAL_EVENT);
+//      system_clear_exec_state_flag(EXEC_RESET); // Disable any existing reset
+//      do {
+//        // Block everything, except reset and status reports, until user issues reset or power
+//        // cycles. Hard limits typically occur while unattended or not paying attention. Gives
+//        // the user and a GUI time to do what is needed before resetting, like killing the
+//        // incoming stream. The same could be said about soft limits. While the position is not
+//        // lost, continued streaming could cause a serious crash if by chance it gets executed.
+//      } while (bit_isfalse(sys_rt_exec_state,EXEC_RESET));
+//    }
+
+
     system_clear_exec_alarm(); // Clear alarm
+  }
+
+  // Automatically resume when torch has fired and parking motion (if any)
+  // has retracted.
+  if ((sys.state == STATE_WAIT_THC) && !(sys.suspend & SUSPEND_WAIT_THC)) {
+    if (sys.suspend & SUSPEND_RESTORE_COMPLETE) {
+      sys.state = STATE_IDLE; // Set to IDLE to immediately resume the cycle.
+    } else if (sys.suspend & SUSPEND_RETRACT_COMPLETE) {
+      // Flag to re-energize powered components and restore original position, if disabled by WAIT_THC.
+      // NOTE: For a THC wait to resume, the torch must have fired, as indicated by HOLD state, and
+      // the retraction execution is complete, which implies the initial feed hold is not active. To
+      // restore normal operation, the restore procedures must be initiated by the following flag. Once,
+      // they are complete, it will call CYCLE_START automatically to resume and exit the suspend.
+      sys.suspend |= SUSPEND_INITIATE_RESTORE;
+    }
   }
 
   rt_exec = sys_rt_exec_state; // Copy volatile sys_rt_exec_state.
@@ -256,7 +317,7 @@ void protocol_exec_rt_system()
 
     // NOTE: Once hold is initiated, the system immediately enters a suspend state to block all
     // main program processes until either reset or resumed. This ensures a hold completes safely.
-    if (rt_exec & (EXEC_MOTION_CANCEL | EXEC_FEED_HOLD | EXEC_SAFETY_DOOR | EXEC_SLEEP)) {
+    if (rt_exec & (EXEC_MOTION_CANCEL | EXEC_FEED_HOLD | EXEC_WAIT_THC | EXEC_SLEEP)) {
 
       // State check for allowable states for hold methods.
       if (!(sys.state & (STATE_ALARM | STATE_CHECK_MODE))) {
@@ -277,7 +338,7 @@ void protocol_exec_rt_system()
         // Execute and flag a motion cancel with deceleration and return to idle. Used primarily by probing cycle
         // to halt and cancel the remainder of the motion.
         if (rt_exec & EXEC_MOTION_CANCEL) {
-          // MOTION_CANCEL only occurs during a CYCLE, but a HOLD and SAFETY_DOOR may been initiated beforehand
+          // MOTION_CANCEL only occurs during a CYCLE, but a HOLD and WAIT_THC may been initiated beforehand
           // to hold the CYCLE. Motion cancel is valid for a single planner block motion only, while jog cancel
           // will handle and clear multiple planner block motions.
           if (!(sys.state & STATE_JOG)) { sys.suspend |= SUSPEND_MOTION_CANCEL; } // NOTE: State is STATE_CYCLE.
@@ -285,21 +346,19 @@ void protocol_exec_rt_system()
 
         // Execute a feed hold with deceleration, if required. Then, suspend system.
         if (rt_exec & EXEC_FEED_HOLD) {
-            spindle_stop(); // Ensure that spindle is disabled
-          // Block SAFETY_DOOR, JOG, and SLEEP states from changing to HOLD state.
-          if (!(sys.state & (STATE_SAFETY_DOOR | STATE_JOG | STATE_SLEEP))) { sys.state = STATE_HOLD; }
+          spindle_stop(); // Ensure that spindle is disabled
+          // Block JOG, and SLEEP states from changing to HOLD state.
+          if (!(sys.state & (STATE_JOG | STATE_SLEEP))) { sys.state = STATE_HOLD; }
         }
 
-        // Execute a safety door stop with a feed hold and disable spindle/coolant.
-        // NOTE: Safety door differs from feed holds by stopping everything no matter state, disables powered
-        // devices (spindle/coolant), and blocks resuming until switch is re-engaged.
-        if (rt_exec & EXEC_SAFETY_DOOR) {
-          report_feedback_message(MESSAGE_SAFETY_DOOR_AJAR);
-          // If jogging, block safety door methods until jog cancel is complete. Just flag that it happened.
+        // Block resuming until THC indicates that torch has fired.
+        if (rt_exec & EXEC_WAIT_THC) {
+          report_feedback_message(MESSAGE_WAIT_THC);
+          // If jogging, block THC wait until jog cancel is complete. Just flag that it happened.
           if (!(sys.suspend & SUSPEND_JOG_CANCEL)) {
-            // Check if the safety re-opened during a restore parking motion only. Ignore if
+            // Check if the torch was enabled during a restore parking motion only. Ignore if
             // already retracting, parked or in sleep state.
-            if (sys.state == STATE_SAFETY_DOOR) {
+            if (sys.state == STATE_WAIT_THC) {
               if (sys.suspend & SUSPEND_INITIATE_RESTORE) { // Actively restoring
                 #ifdef PARKING_ENABLE
                   // Set hold and reset appropriate control flags to restart parking sequence.
@@ -313,11 +372,10 @@ void protocol_exec_rt_system()
                 sys.suspend |= SUSPEND_RESTART_RETRACT;
               }
             }
-            if (sys.state != STATE_SLEEP) { sys.state = STATE_SAFETY_DOOR; }
+            if (sys.state != STATE_SLEEP) { sys.state = STATE_WAIT_THC; }
           }
-          // NOTE: This flag doesn't change when the door closes, unlike sys.state. Ensures any parking motions
-          // are executed if the door switch closes and the state returns to HOLD.
-          sys.suspend |= SUSPEND_SAFETY_DOOR_AJAR;
+          // NOTE: This flag doesn't change until the torch fires, unlike sys.state.
+          sys.suspend |= SUSPEND_WAIT_THC;
         }
         
       }
@@ -327,27 +385,14 @@ void protocol_exec_rt_system()
         sys.state = STATE_SLEEP; 
       }
 
-      system_clear_exec_state_flag((EXEC_MOTION_CANCEL | EXEC_FEED_HOLD | EXEC_SAFETY_DOOR | EXEC_SLEEP));
+      system_clear_exec_state_flag((EXEC_MOTION_CANCEL | EXEC_FEED_HOLD | EXEC_WAIT_THC | EXEC_SLEEP));
     }
 
     // Execute a cycle start by starting the stepper interrupt to begin executing the blocks in queue.
     if (rt_exec & EXEC_CYCLE_START) {
-      // Block if called at same time as the hold commands: feed hold, motion cancel, and safety door.
+      // Block if called at same time as the hold commands: feed hold and motion cancel.
       // Ensures auto-cycle-start doesn't resume a hold without an explicit user-input.
-      if (!(rt_exec & (EXEC_FEED_HOLD | EXEC_MOTION_CANCEL | EXEC_SAFETY_DOOR))) {
-        // Resume door state when parking motion has retracted and door has been closed.
-        if ((sys.state == STATE_SAFETY_DOOR) && !(sys.suspend & SUSPEND_SAFETY_DOOR_AJAR)) {
-          if (sys.suspend & SUSPEND_RESTORE_COMPLETE) {
-            sys.state = STATE_IDLE; // Set to IDLE to immediately resume the cycle.
-          } else if (sys.suspend & SUSPEND_RETRACT_COMPLETE) {
-            // Flag to re-energize powered components and restore original position, if disabled by SAFETY_DOOR.
-            // NOTE: For a safety door to resume, the switch must be closed, as indicated by HOLD state, and
-            // the retraction execution is complete, which implies the initial feed hold is not active. To
-            // restore normal operation, the restore procedures must be initiated by the following flag. Once,
-            // they are complete, it will call CYCLE_START automatically to resume and exit the suspend.
-            sys.suspend |= SUSPEND_INITIATE_RESTORE;
-          }
-        }
+      if (!(rt_exec & (EXEC_FEED_HOLD | EXEC_MOTION_CANCEL))) {
         // Cycle start only when IDLE or when a hold is complete and ready to resume.
         if ((sys.state == STATE_IDLE) || ((sys.state & STATE_HOLD) && (sys.suspend & SUSPEND_HOLD_COMPLETE))) {
           if (sys.state == STATE_HOLD && sys.spindle_stop_ovr) {
@@ -376,8 +421,8 @@ void protocol_exec_rt_system()
       // NOTE: Bresenham algorithm variables are still maintained through both the planner and stepper
       // cycle reinitializations. The stepper path should continue exactly as if nothing has happened.
       // NOTE: EXEC_CYCLE_STOP is set by the stepper subsystem when a cycle or feed hold completes.
-      if ((sys.state & (STATE_HOLD|STATE_SAFETY_DOOR|STATE_SLEEP)) && !(sys.soft_limit) && !(sys.suspend & SUSPEND_JOG_CANCEL)) {
-        // Hold complete. Set to indicate ready to resume.  Remain in HOLD or DOOR states until user
+      if ((sys.state & (STATE_HOLD|STATE_WAIT_THC|STATE_SLEEP)) && !(sys.soft_limit) && !(sys.suspend & SUSPEND_JOG_CANCEL)) {
+        // Hold complete. Set to indicate ready to resume.  Remain in HOLD or WAIT states until user
         // has issued a resume command or reset.
         plan_cycle_reinitialize();
         if (sys.step_control & STEP_CONTROL_EXECUTE_HOLD) { sys.suspend |= SUSPEND_HOLD_COMPLETE; }
@@ -392,10 +437,10 @@ void protocol_exec_rt_system()
           gc_sync_position();
           plan_sync_position();
         }
-        if (sys.suspend & SUSPEND_SAFETY_DOOR_AJAR) { // Only occurs when safety door opens during jog.
+        if (sys.suspend & SUSPEND_WAIT_THC) { // Only occurs when torch is enabled during jog.
           sys.suspend &= ~(SUSPEND_JOG_CANCEL);
           sys.suspend |= SUSPEND_HOLD_COMPLETE;
-          sys.state = STATE_SAFETY_DOOR;
+          sys.state = STATE_WAIT_THC;
         } else {
           sys.suspend = SUSPEND_DISABLE;
           sys.state = STATE_IDLE;
@@ -533,14 +578,17 @@ void protocol_exec_rt_system()
   #endif
 
   // Reload step segment buffer
-  if (sys.state & (STATE_CYCLE | STATE_HOLD | STATE_SAFETY_DOOR | STATE_HOMING | STATE_SLEEP| STATE_JOG)) {
+  if (sys.state & (STATE_CYCLE | STATE_HOLD | STATE_WAIT_THC | STATE_HOMING | STATE_SLEEP| STATE_JOG)) {
     st_prep_buffer();
   }
+
+  // Status LEDs
+  protocol_update_status_leds();
 
 }
 
 
-// Handles Grbl system suspend procedures, such as feed hold, safety door, and parking motion.
+// Handles Grbl system suspend procedures, such as feed hold, THC wait, and parking motion.
 // The system will enter this loop, create local variables for suspend tasks, and return to
 // whatever function that invoked the suspend, such that Grbl resumes normal operation.
 // This function is written in a way to promote custom parking motions. Simply use this as a
@@ -590,19 +638,21 @@ static void protocol_exec_rt_suspend()
     if (sys.suspend & SUSPEND_HOLD_COMPLETE) {
 
       // Parking manager. Handles de/re-energizing, switch state checks, and parking motions for 
-      // the safety door and sleep states.
-      if (sys.state & (STATE_SAFETY_DOOR | STATE_SLEEP)) {
+      // the THC wait and sleep states.
+      if (sys.state & (STATE_WAIT_THC | STATE_SLEEP)) {
       
         // Handles retraction motions and de-energizing.
         if (bit_isfalse(sys.suspend,SUSPEND_RETRACT_COMPLETE)) {
 
-          // Ensure any prior spindle stop override is disabled at start of safety door routine.
+          // Ensure any prior spindle stop override is disabled at start of THC wait routine.
           sys.spindle_stop_ovr = SPINDLE_STOP_OVR_DISABLED;
 
           #ifndef PARKING_ENABLE
 
-            spindle_set_state(SPINDLE_DISABLE,0.0); // De-energize
-            coolant_set_state(COOLANT_DISABLE);     // De-energize
+            if (!(sys.state & STATE_WAIT_THC)) {
+              spindle_set_state(SPINDLE_DISABLE,0.0); // De-energize
+              coolant_set_state(COOLANT_DISABLE);     // De-energize
+            }
 
           #else
 					
@@ -640,8 +690,10 @@ static void protocol_exec_rt_suspend()
               // NOTE: Clear accessory state after retract and after an aborted restore motion.
               pl_data->condition = (PL_COND_FLAG_SYSTEM_MOTION|PL_COND_FLAG_NO_FEED_OVERRIDE);
               pl_data->spindle_speed = 0.0;
-              spindle_set_state(SPINDLE_DISABLE,0.0); // De-energize
-              coolant_set_state(COOLANT_DISABLE); // De-energize
+              if (!(sys.state & STATE_WAIT_THC)) {
+                spindle_set_state(SPINDLE_DISABLE,0.0); // De-energize
+                coolant_set_state(COOLANT_DISABLE); // De-energize
+              }
 
               // Execute fast parking retract motion to parking target location.
               if (parking_target[PARKING_AXIS] < PARKING_TARGET) {
@@ -652,10 +704,12 @@ static void protocol_exec_rt_suspend()
 
             } else {
 
-              // Parking motion not possible. Just disable the spindle and coolant.
-              // NOTE: Laser mode does not start a parking motion to ensure the laser stops immediately.
-              spindle_set_state(SPINDLE_DISABLE,0.0); // De-energize
-              coolant_set_state(COOLANT_DISABLE);     // De-energize
+              if (!(sys.state & STATE_WAIT_THC)) {
+                // Parking motion not possible. Just disable the spindle and coolant.
+                // NOTE: Laser mode does not start a parking motion to ensure the laser stops immediately.
+                spindle_set_state(SPINDLE_DISABLE,0.0); // De-energize
+                coolant_set_state(COOLANT_DISABLE);     // De-energize
+              }
 
             }
 
@@ -677,14 +731,14 @@ static void protocol_exec_rt_suspend()
             return; // Abort received. Return to re-initialize.
           }    
           
-          // Allows resuming from parking/safety door. Actively checks if safety door is closed and ready to resume.
-          if (sys.state == STATE_SAFETY_DOOR) {
-            if (!(system_check_safety_door_ajar())) {
-              sys.suspend &= ~(SUSPEND_SAFETY_DOOR_AJAR); // Reset door ajar flag to denote ready to resume.
+          // Allows resuming from THC wait. Actively checks if torch has fired.
+          if (sys.state == STATE_WAIT_THC) {
+            if (system_check_wait_torch_fired()) {
+              sys.suspend &= ~(SUSPEND_WAIT_THC); // Reset wait flag to denote ready to resume.
             }
           }
 
-          // Handles parking restore and safety door resume.
+          // Handles parking restore and THC wait resume.
           if (sys.suspend & SUSPEND_INITIATE_RESTORE) {
 
             #ifdef PARKING_ENABLE
@@ -707,23 +761,21 @@ static void protocol_exec_rt_suspend()
 
             // Delayed Tasks: Restart spindle and coolant, delay to power-up, then resume cycle.
             if (gc_state.modal.spindle != SPINDLE_DISABLE) {
-              // Block if safety door re-opened during prior restore actions.
+              // Block if torch did not fire during prior restore actions.
               if (bit_isfalse(sys.suspend,SUSPEND_RESTART_RETRACT)) {
                 if (bit_istrue(settings.flags,BITFLAG_LASER_MODE)) {
                   // When in laser mode, ignore spindle spin-up delay. Set to turn on laser when cycle starts.
                   bit_true(sys.step_control, STEP_CONTROL_UPDATE_SPINDLE_PWM);
                 } else {
                   spindle_set_state((restore_condition & (PL_COND_FLAG_SPINDLE_CW | PL_COND_FLAG_SPINDLE_CCW)), restore_spindle_speed);
-                  delay_sec(SAFETY_DOOR_SPINDLE_DELAY, DELAY_MODE_SYS_SUSPEND);
                 }
               }
             }
             if (gc_state.modal.coolant != COOLANT_DISABLE) {
-              // Block if safety door re-opened during prior restore actions.
+              // Block if torch did not fire during prior restore actions.
               if (bit_isfalse(sys.suspend,SUSPEND_RESTART_RETRACT)) {
                 // NOTE: Laser mode will honor this delay. An exhaust system is often controlled by this pin.
                 coolant_set_state((restore_condition & (PL_COND_FLAG_COOLANT_FLOOD | PL_COND_FLAG_COOLANT_MIST)));
-                delay_sec(SAFETY_DOOR_COOLANT_DELAY, DELAY_MODE_SYS_SUSPEND);
               }
             }
 
@@ -735,7 +787,7 @@ static void protocol_exec_rt_suspend()
               #else
               if ((settings.flags & (BITFLAG_HOMING_ENABLE|BITFLAG_LASER_MODE)) == BITFLAG_HOMING_ENABLE) {
               #endif
-                // Block if safety door re-opened during prior restore actions.
+                // Block if torch did not fire during prior restore actions.
                 if (bit_isfalse(sys.suspend,SUSPEND_RESTART_RETRACT)) {
                   // Regardless if the retract parking motion was a valid/safe motion or not, the
                   // restore parking motion should logically be valid, either by returning to the

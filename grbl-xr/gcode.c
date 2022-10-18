@@ -88,6 +88,9 @@ uint8_t gc_execute_line(char *line)
   uint16_t value_words = 0; // Tracks value words.
   uint8_t gc_parser_flags = GC_PARSER_NONE;
 
+  // need to determine if jogging is only in Z to avoid out of bounds error caused by soft limits
+  bool only_z = true; // is set false when X or Y is seen
+
   // Determine if the line is a jogging motion or a normal g-code block.
   if (line[0] == '$') { // NOTE: `$J=` already parsed when passed to this function.
     // Set G1 and G94 enforced modes to ensure accurate error checks.
@@ -280,6 +283,12 @@ uint8_t gc_execute_line(char *line)
               gc_block.modal.override = OVERRIDE_PARKING_MOTION;
               break;
           #endif
+          case 70:
+            if (axis_command) { FAIL(STATUS_GCODE_AXIS_COMMAND_CONFLICT); } // [Axis word/command conflict]
+            word_bit = MODAL_GROUP_G0;
+            axis_command = AXIS_COMMAND_NON_MODAL;
+            gc_block.non_modal_command = NON_MODAL_SET_MACHINE_POS;
+            break;
           default: FAIL(STATUS_GCODE_UNSUPPORTED_COMMAND); // [Unsupported M command]
         }
 
@@ -322,8 +331,8 @@ uint8_t gc_execute_line(char *line)
 					  if (value > MAX_TOOL_NUMBER) { FAIL(STATUS_GCODE_MAX_VALUE_EXCEEDED); }
             gc_block.values.t = int_value;
 						break;
-          case 'X': word_bit = WORD_X; gc_block.values.xyz[X_AXIS] = value; axis_words |= (1<<X_AXIS); break;
-          case 'Y': word_bit = WORD_Y; gc_block.values.xyz[Y_AXIS] = value; axis_words |= (1<<Y_AXIS); break;
+          case 'X': word_bit = WORD_X; gc_block.values.xyz[X_AXIS] = value; axis_words |= (1<<X_AXIS); only_z = false; break; //only_z used only for Jog
+          case 'Y': word_bit = WORD_Y; gc_block.values.xyz[Y_AXIS] = value; axis_words |= (1<<Y_AXIS); only_z = false; break; //only_z used only for Jog
           case 'Z': word_bit = WORD_Z; gc_block.values.xyz[Z_AXIS] = value; axis_words |= (1<<Z_AXIS); break;
           default: FAIL(STATUS_GCODE_UNSUPPORTED_COMMAND);
         }
@@ -645,6 +654,9 @@ uint8_t gc_execute_line(char *line)
             FAIL(STATUS_GCODE_G53_INVALID_MOTION_MODE); // [G53 G0/1 not active]
           }
           break;
+        case NON_MODAL_SET_MACHINE_POS:
+          if (!axis_words) { FAIL(STATUS_GCODE_NO_AXIS_WORDS); } // [No axis words]
+          break;
       }
   }
 
@@ -808,7 +820,7 @@ uint8_t gc_execute_line(char *line)
             float delta_r = fabs(target_r-gc_block.values.r);
             if (delta_r > 0.01) {
               if (delta_r > 0.5) { FAIL(STATUS_GCODE_INVALID_TARGET); } // [Arc definition error] > 0.5mm
-              if (delta_r > (0.002*gc_block.values.r)) { FAIL(STATUS_GCODE_INVALID_TARGET); } // [Arc definition error] > 0.005mm AND 0.1% radius
+              if (delta_r > (0.03*gc_block.values.r)) { FAIL(STATUS_GCODE_INVALID_TARGET); } // [Arc definition error] > 0.005mm AND 0.1% radius
             }
           }
           break;
@@ -860,14 +872,14 @@ uint8_t gc_execute_line(char *line)
   if (gc_parser_flags & GC_PARSER_JOG_MOTION) {
     // Only distance and unit modal commands and G53 absolute override command are allowed.
     // NOTE: Feed rate word and axis word checks have already been performed in STEP 3.
-    if (command_words & ~(bit(MODAL_GROUP_G3) | bit(MODAL_GROUP_G6 | bit(MODAL_GROUP_G0))) ) { FAIL(STATUS_INVALID_JOG_COMMAND) };
+    if (command_words & ~(bit(MODAL_GROUP_G3) | bit(MODAL_GROUP_G6) | bit(MODAL_GROUP_G0)) ) { FAIL(STATUS_INVALID_JOG_COMMAND) };
     if (!(gc_block.non_modal_command == NON_MODAL_ABSOLUTE_OVERRIDE || gc_block.non_modal_command == NON_MODAL_NO_ACTION)) { FAIL(STATUS_INVALID_JOG_COMMAND); }
 
     // Initialize planner data to current spindle and coolant modal state.
     pl_data->spindle_speed = gc_state.spindle_speed;
     plan_data.condition = (gc_state.modal.spindle | gc_state.modal.coolant);
 
-    uint8_t status = jog_execute(&plan_data, &gc_block);
+    uint8_t status = jog_execute(&plan_data, &gc_block, only_z);
     if (status == STATUS_OK) { memcpy(gc_state.position, gc_block.values.xyz, sizeof(gc_block.values.xyz)); }
     return(status);
   }
@@ -1025,7 +1037,7 @@ uint8_t gc_execute_line(char *line)
 
   // [18. Set retract mode ]: NOT SUPPORTED
 
-  // [19. Go to predefined position, Set G10, or Set axis offsets ]:
+  // [19. Go to predefined position, Set G10, Set axis offsets, or set machine position ]:
   switch(gc_block.non_modal_command) {
     case NON_MODAL_SET_COORDINATE_DATA:
       settings_write_coord_data(coord_select,gc_block.values.ijk);
@@ -1056,6 +1068,18 @@ uint8_t gc_execute_line(char *line)
     case NON_MODAL_RESET_COORDINATE_OFFSET:
       clear_vector(gc_state.coord_offset); // Disable G92 offsets by zeroing offset vector.
       system_flag_wco_change();
+      break;
+    case NON_MODAL_SET_MACHINE_POS:
+      // Ensure all buffered motions are finished before setting machine position,
+      // otherwise there will be glitches in the machine's motion.
+      protocol_buffer_synchronize();
+      for (idx=0; idx<N_AXIS; idx++) { // Axes indices are consistent, so loop may be used.
+        if (bit_istrue(axis_words,bit(idx)) ) {
+          system_set_mpos(gc_block.values.xyz[idx], idx);
+        }
+      }
+      gc_sync_position();
+      plan_sync_position();
       break;
   }
 

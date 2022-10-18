@@ -33,20 +33,20 @@
 #define EXEC_CYCLE_STOP     bit(2) // bitmask 00000100
 #define EXEC_FEED_HOLD      bit(3) // bitmask 00001000
 #define EXEC_RESET          bit(4) // bitmask 00010000
-#define EXEC_SAFETY_DOOR    bit(5) // bitmask 00100000
+#define EXEC_WAIT_THC       bit(5) // bitmask 00100000
 #define EXEC_MOTION_CANCEL  bit(6) // bitmask 01000000
 #define EXEC_SLEEP          bit(7) // bitmask 10000000
 
 // Alarm executor codes. Valid values (1-255). Zero is reserved.
-#define EXEC_ALARM_HARD_LIMIT           1
-#define EXEC_ALARM_SOFT_LIMIT           2
-#define EXEC_ALARM_ABORT_CYCLE          3
-#define EXEC_ALARM_PROBE_FAIL_INITIAL   4
-#define EXEC_ALARM_PROBE_FAIL_CONTACT   5
-#define EXEC_ALARM_HOMING_FAIL_RESET    6
-#define EXEC_ALARM_HOMING_FAIL_DOOR     7
-#define EXEC_ALARM_HOMING_FAIL_PULLOFF  8
-#define EXEC_ALARM_HOMING_FAIL_APPROACH 9
+#define EXEC_ALARM_HARD_LIMIT                 1
+#define EXEC_ALARM_SOFT_LIMIT                 2
+#define EXEC_ALARM_ABORT_CYCLE                3
+#define EXEC_ALARM_PROBE_FAIL_INITIAL         4
+#define EXEC_ALARM_PROBE_FAIL_CONTACT         5
+#define EXEC_ALARM_HOMING_FAIL_RESET          6
+#define EXEC_ALARM_HOMING_FAIL_PULLOFF        8
+#define EXEC_ALARM_HOMING_FAIL_APPROACH       9
+#define EXEC_ALARM_HOMING_FAIL_DUAL_APPROACH  10
 
 // Override bit maps. Realtime bitflags to control feed, rapid, spindle, and coolant overrides.
 // Spindle/coolant and feed/rapids are separated into two controlling flag variables.
@@ -87,7 +87,7 @@
 #define STATE_CYCLE         bit(3) // Cycle is running or motions are being executed.
 #define STATE_HOLD          bit(4) // Active feed hold
 #define STATE_JOG           bit(5) // Jogging mode.
-#define STATE_SAFETY_DOOR   bit(6) // Safety door is ajar. Feed holds and de-energizes system.
+#define STATE_WAIT_THC      bit(6) // Waiting until THC reports that torch has fired.
 #define STATE_SLEEP         bit(7) // Sleep state.
 
 // Define system suspend flags. Used in various ways to manage suspend states and procedures.
@@ -97,7 +97,7 @@
 #define SUSPEND_RETRACT_COMPLETE  bit(2) // (Safety door only) Indicates retraction and de-energizing is complete.
 #define SUSPEND_INITIATE_RESTORE  bit(3) // (Safety door only) Flag to initiate resume procedures from a cycle start.
 #define SUSPEND_RESTORE_COMPLETE  bit(4) // (Safety door only) Indicates ready to resume normal operation.
-#define SUSPEND_SAFETY_DOOR_AJAR  bit(5) // Tracks safety door state for resuming.
+#define SUSPEND_WAIT_THC          bit(5) // Tracks THC torch fired state for resuming.
 #define SUSPEND_MOTION_CANCEL     bit(6) // Indicates a canceled resume motion. Currently used by probing routine.
 #define SUSPEND_JOG_CANCEL        bit(7) // Indicates a jog cancel in process and to reset buffers when complete.
 
@@ -109,18 +109,10 @@
 #define STEP_CONTROL_UPDATE_SPINDLE_PWM   bit(3)
 
 // Define control pin index for Grbl internal use. Pin maps may change, but these values don't.
-#ifdef ENABLE_SAFETY_DOOR_INPUT_PIN
-  #define N_CONTROL_PIN 4
-  #define CONTROL_PIN_INDEX_SAFETY_DOOR   bit(0)
-  #define CONTROL_PIN_INDEX_RESET         bit(1)
-  #define CONTROL_PIN_INDEX_FEED_HOLD     bit(2)
-  #define CONTROL_PIN_INDEX_CYCLE_START   bit(3)
-#else
-  #define N_CONTROL_PIN 3
-  #define CONTROL_PIN_INDEX_RESET         bit(0)
-  #define CONTROL_PIN_INDEX_FEED_HOLD     bit(1)
-  #define CONTROL_PIN_INDEX_CYCLE_START   bit(2)
-#endif
+#define N_CONTROL_PIN 3
+#define CONTROL_PIN_INDEX_RESET         bit(0)
+#define CONTROL_PIN_INDEX_FEED_HOLD     bit(1)
+#define CONTROL_PIN_INDEX_CYCLE_START   bit(2)
 
 // Define spindle stop override control states.
 #define SPINDLE_STOP_OVR_DISABLED       0  // Must be zero.
@@ -139,6 +131,9 @@ typedef struct {
   uint8_t step_control;        // Governs the step segment generator depending on system state.
   uint8_t probe_succeeded;     // Tracks if last probing cycle was successful.
   uint8_t homing_axis_lock;    // Locks axes when limits engage. Used as an axis motion mask in the stepper ISR.
+  #ifdef ENABLE_DUAL_AXIS
+    uint8_t homing_axis_lock_dual;
+  #endif
   uint8_t f_override;          // Feed rate override value in percent
   uint8_t r_override;          // Rapids override value in percent
   uint8_t spindle_speed_ovr;   // Spindle speed value in percent
@@ -181,8 +176,8 @@ void system_init();
 // Returns bitfield of control pin states, organized by CONTROL_PIN_INDEX. (1=triggered, 0=not triggered).
 uint8_t system_control_get_state();
 
-// Returns if safety door is open or closed, based on pin state.
-uint8_t system_check_safety_door_ajar();
+// Returns if THC reports that torch has fired, based on pin state.
+uint8_t system_check_wait_torch_fired();
 
 // Executes an internal system command, defined as a string starting with a '$'
 uint8_t system_execute_line(char *line);
@@ -198,6 +193,9 @@ float system_convert_axis_steps_to_mpos(int32_t *steps, uint8_t idx);
 
 // Updates a machine 'position' array based on the 'step' array sent.
 void system_convert_array_steps_to_mpos(float *position, int32_t *steps);
+
+// Set machine position of axis 'idx' to 'position'.
+void system_set_mpos(float position, uint8_t idx);
 
 // CoreXY calculation only. Returns x or y-axis "steps" based on CoreXY motor steps.
 #ifdef COREXY

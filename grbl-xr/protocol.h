@@ -36,6 +36,9 @@
 // them as they complete. It is also responsible for finishing the initialization procedures.
 void protocol_main_loop();
 
+// Updates status LEDs based on system state
+void protocol_update_status_leds();
+
 // Checks and executes a realtime command at various stop points in main program
 void protocol_execute_realtime();
 void protocol_exec_rt_system();

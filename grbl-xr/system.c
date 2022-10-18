@@ -31,6 +31,9 @@ void system_init()
   #endif
   CONTROL_PCMSK |= CONTROL_MASK;  // Enable specific pins of the Pin Change Interrupt
   PCICR |= (1 << CONTROL_INT);   // Enable Pin Change Interrupt
+
+  THC_WAIT_DDR &= ~(THC_WAIT_MASK); // Configure as input
+  THC_WAIT_PORT |= THC_WAIT_MASK; // Enable internal pull-up resistors
 }
 
 
@@ -40,17 +43,14 @@ void system_init()
 uint8_t system_control_get_state()
 {
   uint8_t control_state = 0;
-  uint8_t pin = (CONTROL_PIN & CONTROL_MASK);
+  uint8_t pin = (CONTROL_PIN & CONTROL_MASK) ^ CONTROL_MASK;
   #ifdef INVERT_CONTROL_PIN_MASK
     pin ^= INVERT_CONTROL_PIN_MASK;
   #endif
   if (pin) {
-    #ifdef ENABLE_SAFETY_DOOR_INPUT_PIN
-      if (bit_isfalse(pin,(1<<CONTROL_SAFETY_DOOR_BIT))) { control_state |= CONTROL_PIN_INDEX_SAFETY_DOOR; }
-    #endif
-    if (bit_isfalse(pin,(1<<CONTROL_RESET_BIT))) { control_state |= CONTROL_PIN_INDEX_RESET; }
-    if (bit_isfalse(pin,(1<<CONTROL_FEED_HOLD_BIT))) { control_state |= CONTROL_PIN_INDEX_FEED_HOLD; }
-//    if (bit_isfalse(pin,(1<<CONTROL_CYCLE_START_BIT))) { control_state |= CONTROL_PIN_INDEX_CYCLE_START; }
+    if (bit_istrue(pin,(1<<CONTROL_FEED_HOLD_BIT))) { control_state |= CONTROL_PIN_INDEX_FEED_HOLD; }
+//    if (bit_istrue(pin,(1<<CONTROL_RESET_BIT))) { control_state |= CONTROL_PIN_INDEX_RESET; }
+//    if (bit_istrue(pin,(1<<CONTROL_CYCLE_START_BIT))) { control_state |= CONTROL_PIN_INDEX_CYCLE_START; }
   }
   return(control_state);
 }
@@ -66,28 +66,21 @@ ISR(CONTROL_INT_vect)
   if (pin) {
     if (bit_istrue(pin,CONTROL_PIN_INDEX_RESET)) {
       mc_reset();
-    } else if (bit_istrue(pin,CONTROL_PIN_INDEX_CYCLE_START)) {
+    }
+    if (bit_istrue(pin,CONTROL_PIN_INDEX_CYCLE_START)) {
       bit_true(sys_rt_exec_state, EXEC_CYCLE_START);
-    #ifndef ENABLE_SAFETY_DOOR_INPUT_PIN
-      } else if (bit_istrue(pin,CONTROL_PIN_INDEX_FEED_HOLD)) {
-        bit_true(sys_rt_exec_state, EXEC_FEED_HOLD);
-    #else
-      } else if (bit_istrue(pin,CONTROL_PIN_INDEX_SAFETY_DOOR)) {
-        bit_true(sys_rt_exec_state, EXEC_SAFETY_DOOR);
-    #endif
+    }
+    if (bit_istrue(pin,CONTROL_PIN_INDEX_FEED_HOLD)) {
+      bit_true(sys_rt_exec_state, EXEC_FEED_HOLD);
     }
   }
 }
 
 
-// Returns if safety door is ajar(T) or closed(F), based on pin state.
-uint8_t system_check_safety_door_ajar()
+// Returns if torch has fired, based on pin state.
+uint8_t system_check_wait_torch_fired()
 {
-  #ifdef ENABLE_SAFETY_DOOR_INPUT_PIN
-    return(system_control_get_state() & CONTROL_PIN_INDEX_SAFETY_DOOR);
-  #else
-    return(false); // Input pin not enabled, so just return that it's closed.
-  #endif
+  return bit_istrue(THC_WAIT_PIN, THC_WAIT_MASK);
 }
 
 
@@ -156,8 +149,6 @@ uint8_t system_execute_line(char *line)
           break;
         case 'X' : // Disable alarm lock [ALARM]
           if (sys.state == STATE_ALARM) {
-            // Block if safety door is ajar.
-            if (system_check_safety_door_ajar()) { return(STATUS_CHECK_DOOR); }
             report_feedback_message(MESSAGE_ALARM_UNLOCK);
             sys.state = STATE_IDLE;
             // Don't run startup script. Prevents stored moves in startup from causing accidents.
@@ -175,8 +166,12 @@ uint8_t system_execute_line(char *line)
           break;
         case 'H' : // Perform homing cycle [IDLE/ALARM]
           if (bit_isfalse(settings.flags,BITFLAG_HOMING_ENABLE)) {return(STATUS_SETTING_DISABLED); }
-          if (system_check_safety_door_ajar()) { return(STATUS_CHECK_DOOR); } // Block if safety door is ajar.
           sys.state = STATE_HOMING; // Set system state variable
+          // The homing cycle is a special case where protocol_execute_realtime() is not run
+          // in the control loop. Since protocol_execute_realtime() is what updates status LEDs,
+          // we need to manually update the status LEDs just before starting homing so that
+          // the LEDs will correctly reflect the current machine state.
+          protocol_update_status_leds();
           if (line[2] == 0) {
             mc_homing_cycle(HOMING_CYCLE_ALL);
           #ifdef HOMING_SINGLE_AXIS_COMMANDS
@@ -314,6 +309,17 @@ void system_convert_array_steps_to_mpos(float *position, int32_t *steps)
 }
 
 
+void system_set_mpos(float position, uint8_t idx)
+{
+#ifdef COREXY
+#error "TODO implement this for CoreXY"
+#endif
+  if (idx<N_AXIS) {
+    sys_position[idx] = round(position * settings.steps_per_mm[idx]);
+  }
+}
+
+
 // CoreXY calculation only. Returns x or y-axis "steps" based on CoreXY motor steps.
 #ifdef COREXY
   int32_t system_convert_corexy_to_x_axis_steps(int32_t *steps)
@@ -331,7 +337,7 @@ void system_convert_array_steps_to_mpos(float *position, int32_t *steps)
 uint8_t system_check_travel_limits(float *target)
 {
   uint8_t idx;
-  for (idx=0; idx<N_AXIS; idx++) {
+  for (idx=0; idx<N_AXIS-1; idx++) { //should not check Z limits
     #ifdef HOMING_FORCE_SET_ORIGIN
       // When homing forced set origin is enabled, soft limits checks need to account for directionality.
       // NOTE: max_travel is stored as negative
@@ -409,15 +415,14 @@ void system_set_exec_dry_run_flag(uint8_t mask) {
 // TOOGLE THC Z CONTROL ON/OFF
 void system_thc_enable(bool state) {
 
+    THC_ENABLE_DDR |= THC_ENABLE_MASK;
     if(!state){ // THC OFF
         sys_rt_exec_thc = false;
-        pinMode(THC_ENABLE_BIT, 0x1); //output
-        digitalWrite(THC_ENABLE_BIT, 1); //high
+        THC_ENABLE_PORT |= THC_ENABLE_MASK;
 
     } else { // THC ON
         sys_rt_exec_thc = true;
-        pinMode(THC_ENABLE_BIT, 0x1); //output
-        digitalWrite(THC_ENABLE_BIT, 0); //low
+        THC_ENABLE_PORT &= ~(THC_ENABLE_MASK);
     }
 }
 

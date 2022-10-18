@@ -35,7 +35,7 @@ void mc_line(float *target, plan_line_data_t *pl_data)
   // from everywhere in Grbl.
   if (bit_istrue(settings.flags,BITFLAG_SOFT_LIMIT_ENABLE)) {
     // NOTE: Block jog state. Jogging is a special case and soft limits are handled independently.
-    if (sys.state != STATE_JOG) { limits_soft_check(target); }
+    if (sys.state != STATE_JOG && sys.state != STATE_IDLE) { limits_soft_check(target); } // dont check for idle either
   }
 
   // If in check gcode mode, prevent motion by blocking planner. Soft limits still work.
@@ -253,11 +253,14 @@ void mc_homing_cycle(uint8_t cycle_mask)
   limits_init();
 }
 
-
 // Perform tool length probe cycle. Requires probe switch.
 // NOTE: Upon probe failure, the program will be stopped and placed into ALARM state.
 uint8_t mc_probe_cycle(float *target, plan_line_data_t *pl_data, uint8_t parser_flags)
 {
+  uint16_t release_threshold;
+  uint16_t release_time;
+  bool do_continue;
+
   // TODO: Need to update this cycle so it obeys a non-auto cycle start.
   if (sys.state == STATE_CHECK_MODE) { return(GC_PROBE_CHECK_MODE); }
 
@@ -280,18 +283,45 @@ uint8_t mc_probe_cycle(float *target, plan_line_data_t *pl_data, uint8_t parser_
     return(GC_PROBE_FAIL_INIT); // Nothing else to do but bail.
   }
 
-  // Setup and queue probing motion. Auto cycle-start should not start the cycle.
-  mc_line(target, pl_data);
-
-  // Activate the probing state monitor in the stepper module.
-  sys_probe_state = PROBE_ACTIVE;
-
-  // Perform probing cycle. Wait here until probe is triggered or motion completes.
-  system_set_exec_state_flag(EXEC_CYCLE_START);
+  probe_configure_ignore_debounce(is_probe_away);
+  release_threshold = (uint16_t)settings.probe_debounce;
   do {
-    protocol_execute_realtime();
-    if (sys.abort) { return(GC_PROBE_ABORT); } // Check for system abort
-  } while (sys.state != STATE_IDLE);
+    // Setup and queue probing motion. Auto cycle-start should not start the cycle.
+    mc_line(target, pl_data);
+
+    probe_reset_debounce();
+
+    // Activate the probing state monitor in the stepper module.
+    sys_probe_state = PROBE_ACTIVE;
+
+    // Perform probing cycle. Wait here until probe is triggered or motion completes.
+    system_set_exec_state_flag(EXEC_CYCLE_START);
+    do {
+      protocol_execute_realtime();
+      if (sys.abort) { return(GC_PROBE_ABORT); } // Check for system abort
+    } while (sys.state != STATE_IDLE);
+    do_continue = false;
+    if (is_probe_away && (sys_probe_state == PROBE_OFF)) {
+      // If probe is being released, then the probe cycle will be aborted
+      // immediately - in that case we need to check if the probe release
+      // lasts longer than the debounce threshold
+      for (release_time = 0; release_time < release_threshold; release_time++) {
+        // Experiment shows that protocol_execute_realtime() takes only 10 us
+        // when idle, so calling it here shouldn't skew timing too much
+        protocol_execute_realtime();
+        delay_ms(1);
+        if (!probe_get_state()) {
+          // Probe did not stay released during debounce interval.
+          // Reset things and start moving probe again
+          st_reset();
+          plan_reset();
+          plan_sync_position();
+          do_continue = true;
+          break;
+        }
+      }
+    }
+  } while (do_continue);
 
   // Probing cycle complete!
 

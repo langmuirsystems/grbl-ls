@@ -152,8 +152,8 @@ void report_feedback_message(uint8_t message_code)
       printPgmString(PSTR("Enabled")); break;
     case MESSAGE_DISABLED:
       printPgmString(PSTR("Disabled")); break;
-    case MESSAGE_SAFETY_DOOR_AJAR:
-      printPgmString(PSTR("Check Door")); break;
+    case MESSAGE_WAIT_THC:
+      printPgmString(PSTR("Wait for THC")); break;
     case MESSAGE_CHECK_LIMITS:
       printPgmString(PSTR("Check Limits")); break;
     case MESSAGE_PROGRAM_END:
@@ -212,6 +212,7 @@ void report_grbl_settings() {
     report_util_uint8_setting(32,0);
   #endif
   report_util_uint8_setting(40,bit_istrue(settings.extended_flags,EXT_BITFLAG_DRY_RUN));
+  report_util_float_setting(70,settings.probe_debounce,3);
   // Print axis settings
   uint8_t idx, set_idx;
   uint8_t val = AXIS_SETTINGS_START_VAL;
@@ -419,9 +420,6 @@ void report_build_info(char *line)
   #ifndef HOMING_INIT_LOCK
     serial_write('L');
   #endif
-  #ifdef ENABLE_SAFETY_DOOR_INPUT_PIN
-    serial_write('+');
-  #endif  
   #ifndef ENABLE_RESTORE_EEPROM_WIPE_ALL // NOTE: Shown when disabled.
     serial_write('*');
   #endif
@@ -439,6 +437,9 @@ void report_build_info(char *line)
   #endif
   #ifndef FORCE_BUFFER_SYNC_DURING_WCO_CHANGE // NOTE: Shown when disabled.
     serial_write('W');
+  #endif
+  #ifdef ENABLE_DUAL_AXIS
+    serial_write('2');
   #endif
   // NOTE: Compiled values, like override increments/max/min values, may be added at some point later.
   serial_write(',');
@@ -488,17 +489,17 @@ void report_realtime_status()
     case STATE_HOMING: printPgmString(PSTR("Home")); break;
     case STATE_ALARM: printPgmString(PSTR("Alarm")); break;
     case STATE_CHECK_MODE: printPgmString(PSTR("Check")); break;
-    case STATE_SAFETY_DOOR:
-      printPgmString(PSTR("Door:"));
+    case STATE_WAIT_THC:
+      printPgmString(PSTR("Wait:"));
       if (sys.suspend & SUSPEND_INITIATE_RESTORE) {
         serial_write('3'); // Restoring
       } else {
         if (sys.suspend & SUSPEND_RETRACT_COMPLETE) {
-          if (sys.suspend & SUSPEND_SAFETY_DOOR_AJAR) {
-            serial_write('1'); // Door ajar
+          if (sys.suspend & SUSPEND_WAIT_THC) {
+            serial_write('1'); // Waiting for torch to fire
           } else {
             serial_write('0');
-          } // Door closed and ready to resume
+          } // Torch fired and ready to resume
         } else {
           serial_write('2'); // Retracting
         }
@@ -573,14 +574,23 @@ void report_realtime_status()
       printPgmString(PSTR("|Pn:"));
       if (prb_pin_state) { serial_write('P'); }
       if (lim_pin_state) {
-        if (bit_istrue(lim_pin_state,bit(X_AXIS))) { serial_write('X'); }
-        if (bit_istrue(lim_pin_state,bit(Y_AXIS))) { serial_write('Y'); }
-        if (bit_istrue(lim_pin_state,bit(Z_AXIS))) { serial_write('Z'); }
+        #ifdef ENABLE_DUAL_AXIS
+          #if (DUAL_AXIS_SELECT == X_AXIS)
+            if (bit_istrue(lim_pin_state,(bit(X_AXIS)|bit(N_AXIS)))) { serial_write('X'); }
+            if (bit_istrue(lim_pin_state,bit(Y_AXIS))) { serial_write('Y'); }
+          #endif
+          #if (DUAL_AXIS_SELECT == Y_AXIS)
+            if (bit_istrue(lim_pin_state,bit(X_AXIS))) { serial_write('X'); }
+            if (bit_istrue(lim_pin_state,(bit(Y_AXIS)))) { serial_write('Y'); serial_write('1');}
+          #endif
+          if (bit_istrue(lim_pin_state,bit(Z_AXIS))) { serial_write('Y'); serial_write('2'); }
+        #else
+          if (bit_istrue(lim_pin_state,bit(X_AXIS))) { serial_write('X'); }
+          if (bit_istrue(lim_pin_state,bit(Y_AXIS))) { serial_write('Y'); }
+          if (bit_istrue(lim_pin_state,bit(Z_AXIS))) { serial_write('Z'); }
+        #endif
       }
       if (ctrl_pin_state) {
-        #ifdef ENABLE_SAFETY_DOOR_INPUT_PIN
-          if (bit_istrue(ctrl_pin_state,CONTROL_PIN_INDEX_SAFETY_DOOR)) { serial_write('D'); }
-        #endif
         if (bit_istrue(ctrl_pin_state,CONTROL_PIN_INDEX_RESET)) { serial_write('R'); }
         if (bit_istrue(ctrl_pin_state,CONTROL_PIN_INDEX_FEED_HOLD)) { serial_write('H'); }
         if (bit_istrue(ctrl_pin_state,CONTROL_PIN_INDEX_CYCLE_START)) { serial_write('S'); }
@@ -591,7 +601,7 @@ void report_realtime_status()
   #ifdef REPORT_FIELD_WORK_COORD_OFFSET
     if (sys.report_wco_counter > 0) { sys.report_wco_counter--; }
     else {
-      if (sys.state & (STATE_HOMING | STATE_CYCLE | STATE_HOLD | STATE_JOG | STATE_SAFETY_DOOR)) {
+      if (sys.state & (STATE_HOMING | STATE_CYCLE | STATE_HOLD | STATE_JOG | STATE_WAIT_THC)) {
         sys.report_wco_counter = (REPORT_WCO_REFRESH_BUSY_COUNT-1); // Reset counter for slow refresh
       } else { sys.report_wco_counter = (REPORT_WCO_REFRESH_IDLE_COUNT-1); }
       if (sys.report_ovr_counter == 0) { sys.report_ovr_counter = 1; } // Set override on next report.
@@ -603,7 +613,7 @@ void report_realtime_status()
   #ifdef REPORT_FIELD_OVERRIDES
     if (sys.report_ovr_counter > 0) { sys.report_ovr_counter--; }
     else {
-      if (sys.state & (STATE_HOMING | STATE_CYCLE | STATE_HOLD | STATE_JOG | STATE_SAFETY_DOOR)) {
+      if (sys.state & (STATE_HOMING | STATE_CYCLE | STATE_HOLD | STATE_JOG | STATE_WAIT_THC)) {
         sys.report_ovr_counter = (REPORT_OVR_REFRESH_BUSY_COUNT-1); // Reset counter for slow refresh
       } else { sys.report_ovr_counter = (REPORT_OVR_REFRESH_IDLE_COUNT-1); }
       printPgmString(PSTR("|Ov:"));
