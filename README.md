@@ -1,4 +1,4 @@
-**GRBL-ls** is a plasma focused branch of Grbl: a no-compromise, high performance alternative to parallel-port-based motion control for CNC machines. 
+**GRBL-MR1** is a CNC Milling focused branch of Grbl: a no-compromise, high performance alternative to parallel-port-based motion control for CNC machines. 
 
 The controller is written in highly optimized C utilizing every clever feature of the AVR-chips to achieve precise timing and asynchronous operation. It is able to maintain up to 30kHz of stable, jitter free control pulses.
 
